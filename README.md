@@ -1,4 +1,4 @@
 Dota2PickAssist
 ===============
 
-Dota 2 Pick Assist
+A tool that helps to pick heroes for your team in captains mode according other's team heroes pool.
