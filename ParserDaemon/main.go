@@ -3,41 +3,51 @@ package main
 
 import (
 	"./parser"
+	"encoding/json"
+	"fmt"
+	"io/ioutil"
 	"log"
 	"os"
 )
 
-func LoadApiKey(file string) (key string) {
-	f, err := os.OpenFile(file, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
-	if err != nil {
-		log.Fatalln("Failed to open ApiKey")
-		return
-	}
-	defer f.Close()
+type DbConfig struct {
+	Host     string `json:"host"`
+	Port     string `json:"port"`
+	Login    string `json:"login"`
+	Password string `json:"password"`
+	DbName   string `json:"db_name"`
+}
 
-	data := make([]byte, 100)
-	count, err := f.Read(data)
-	if err != nil {
-		log.Fatal(err)
+type Config struct {
+	SteamApiKey string   `json:"steam_api_key"`
+	Db          DbConfig `json:"db"`
+	LogFile     string   `json:"log_file"`
+}
+
+func LoadConfig(filePath string) (cfg Config) {
+	file, e := ioutil.ReadFile(filePath)
+	if e != nil {
+		fmt.Printf("File error: %v\n", e)
+		os.Exit(1)
 	}
 
-	key = string(data[:count])
-	return key
+	fmt.Println("Loading config")
+	json.Unmarshal(file, &cfg)
+	return cfg
 }
 
 func main() {
-	f, err := os.OpenFile("testlogfile.log", os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+	config := LoadConfig("config.json")
+
+	f, err := os.OpenFile(config.LogFile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
 	if err != nil {
-		return
+		fmt.Printf("File error: %v\n", err)
+		os.Exit(1)
 	}
 	defer f.Close()
 
 	log.SetOutput(f)
-
-	log.Println("Starting...")
-
-	key := LoadApiKey("ApiKey")
-	parser.Start(key)
-
-	log.Println("Exiting...")
+	log.Println("Starting")
+	parser.Start(config.SteamApiKey)
+	log.Println("Exiting")
 }
