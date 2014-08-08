@@ -11,44 +11,48 @@ import (
 const streamApi = "https://api.steampowered.com/IDOTA2Match_570/"
 
 type Player struct {
-	account_id  float64
-	player_slot float64
-	hero_id     float64
+	AccountId  float64 `json:"account_id"`
+	PlayerSlot float64 `json:"player_slot"`
+	HeroId     float64 `json:"hero_id"`
 }
 
 type Match struct {
-	match_id      float64
-	match_seq_num float64
-	start_time    float64
-	lobby_type    float64
-	players       []Player
+	MatchId       float64  `json:"match_id"`
+	MatchSeqNum   float64  `json:"match_seq_num"`
+	StartTime     float64  `json:"start_time"`
+	LobbyType     float64  `json:"lobby_type"`
+	RadiantTeamId float64  `json:"radiant_team_id"`
+	DireTeamId    float64  `json:"dire_team_id"`
+	Players       []Player `json:"players"`
 }
 
-type GetMatchHistoryResult struct {
-	result            float64
-	status            float64
-	statusDetail      float64
-	num_results       float64
-	total_results     float64
-	results_remaining float64
-	matches           []Match
+type MatchHistoryResult struct {
+	Result struct {
+		Status           float64 `json:"status"`
+		NumResults       float64 `json:"num_results"`
+		TotalResults     float64 `json:"total_results"`
+		ResultsRemaining float64 `json:"results_remaining"`
+		Matches          []Match `json:"matches"`
+	}
 }
 
 func Start(apiKey string) {
 	resp, err := http.Get(streamApi + "GetMatchHistory/v1/?key=" + apiKey)
 	if err != nil {
-		// handle error
+		panic(err)
 	}
 	defer resp.Body.Close()
 
 	bodyBytes, _ := ioutil.ReadAll(resp.Body)
-	//bodyString := string(bodyBytes)
 
-	var result GetMatchHistoryResult
-	err = json.Unmarshal(bodyBytes, &result)
-	if err != nil || result.result != 1 {
-		fmt.Println("error:", err)
+	var res MatchHistoryResult
+	err = json.Unmarshal(bodyBytes, &res)
+	if err != nil && res.Result.Status != 1 {
+		fmt.Println("result", res)
+		fmt.Println("JSON", string(bodyBytes))
+		panic(err)
 	}
 
+	fmt.Println("Matches fetched:", len(res.Result.Matches))
 	//fmt.Println(bodyString)
 }
