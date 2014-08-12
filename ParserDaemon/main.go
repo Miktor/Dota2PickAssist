@@ -2,6 +2,7 @@
 package main
 
 import (
+	"./dal"
 	"./parser"
 	"encoding/json"
 	"fmt"
@@ -10,18 +11,10 @@ import (
 	"os"
 )
 
-type DbConfig struct {
-	Host     string `json:"host"`
-	Port     string `json:"port"`
-	Login    string `json:"login"`
-	Password string `json:"password"`
-	DbName   string `json:"db_name"`
-}
-
 type Config struct {
-	SteamApiKey string   `json:"steam_api_key"`
-	Db          DbConfig `json:"db"`
-	LogFile     string   `json:"log_file"`
+	SteamApiKey string       `json:"steam_api_key"`
+	Db          dal.DbConfig `json:"db"`
+	LogFile     string       `json:"log_file"`
 }
 
 func LoadConfig(filePath string) (cfg Config) {
@@ -33,13 +26,17 @@ func LoadConfig(filePath string) (cfg Config) {
 
 	fmt.Println("Loading config")
 	json.Unmarshal(file, &cfg)
+
+	fmt.Println("Api key = " + cfg.SteamApiKey)
+
 	return cfg
 }
 
 func main() {
 	config := LoadConfig("config.json")
+	dal.Connect(config.Db)
 
-	f, err := os.OpenFile(config.LogFile, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+	f, err := os.OpenFile(config.LogFile, os.O_RDWR|os.O_TRUNC, 0666)
 	if err != nil {
 		fmt.Printf("File error: %v\n", err)
 		os.Exit(1)
