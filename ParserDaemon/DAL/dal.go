@@ -20,11 +20,30 @@ type DbConfig struct {
 	DbName   string `json:"db_name"`
 }
 
+const queryAddMatch string = "INSERT INTO matches (season, radiant_win, duration, start_time, match_id, match_seq_num, cluster, first_blood_time, lobby_type, human_players, leagueid, positive_votes, negative_votes, game_mode, tower_status_radiant, tower_status_dire, barracks_status_radiant, barracks_status_dire) " +
+	"VALUES( ?, ?, ?, FROM_UNIXTIME( ? ), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? )"
+const queryAddPlayer string = "INSERT INTO match_players (match_id, account_id, hero_id, item_0, item_1, item_2, item_3, item_4, item_5, kills, deaths, assists, leaver_status, gold, last_hits, denies, gold_per_min, xp_per_min, gold_spent, hero_damage, tower_damage, hero_healing, level, skill_build, player_slot) " +
+	"VALUES( ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+const queryAddTeam string = "INSERT INTO match_teams (match_id, team_id, name, logo, team_complete, radiant) " +
+	"VALUES( ?, ?, ?, ?, ?, ?)"
+const queryAddSkillBuilds string = "INSERT INTO player_skill_builds (build_id, `order`, level, ability) VALUES( ?, ?, ?, ?)"
+const queryAddCaptain string = "INSERT INTO match_captains (match_id, captain, radiant) VALUES( ?, ?, ?)"
+const queryAddPickBans string = "INSERT INTO match_picks_bans (match_id, `order`, is_pick, hero_id, team) " +
+	" VALUES( ?, ?, ?, ?, ? )"
+const queryAddUnits string = "INSERT INTO match_additional_units (match_id, account_id, unitname, item_0, item_1, item_2, item_3, item_4, item_5, player_slot) " +
+	"VALUES( ?, ?, ?, ?, ?, ?, ?, ?, ?, ? )"
+
 type dbData struct {
-	db                 *sql.DB
+	db *sql.DB
+}
+
+type DbContext struct {
+	transaction *sql.Tx
+
 	stmtAddSkillBuilds *sql.Stmt
 	stmtAddMatch       *sql.Stmt
 	stmtAddTeam        *sql.Stmt
+	stmtAddCaptain     *sql.Stmt
 	stmtAddPlayer      *sql.Stmt
 	stmtAddPickBans    *sql.Stmt
 	stmtAddUnits       *sql.Stmt
@@ -72,7 +91,7 @@ type AdditionalUnits struct {
 	Item_5   uint16 `json:"item_5"`
 }
 type PlayerEx struct {
-	AccountId        uint64            `json:"accountId"`
+	AccountId        uint32            `json:"account_id"`
 	Player_slot      uint8             `json:"player_slot"`
 	Hero_id          uint8             `json:"hero_id"`
 	Item_0           uint16            `json:"item_0"`
@@ -109,21 +128,21 @@ type MatchDetailsResult struct {
 		Players               []PlayerEx  `json:"players"`
 		Season                uint64      `json:"season"`
 		RadiantWin            bool        `json:"radiant_win"`
-		Durration             uint64      `json:"results_remaining"`
-		StartTime             uint64      `json:"start_time"`
+		Durration             uint32      `json:"duration"`
+		StartTime             uint32      `json:"start_time"`
 		MatchID               uint64      `json:"match_id"`
 		MatchSeq              uint64      `json:"match_seq_num"`
 		TowerStatusRadiant    uint16      `json:"tower_status_radiant"`
 		TowerStatusDire       uint16      `json:"tower_status_dire"`
 		BarracksStatusRadiant uint8       `json:"barracks_status_radiant"`
 		BarracksStatusDire    uint8       `json:"barracks_status_dire"`
-		Cluster               uint8       `json:"cluster"`
-		FirstBloodTime        uint64      `json:"first_blood_time"`
+		Cluster               uint32      `json:"cluster"`
+		FirstBloodTime        uint32      `json:"first_blood_time"`
 		LobbyType             uint8       `json:"lobby_type"`
-		HumanPlayers          uint64      `json:"human_players"`
-		LeagueId              uint64      `json:"leagueid"`
-		PositiveVotes         uint64      `json:"positive_votes"`
-		NegativeVotes         uint64      `json:"negative_votes"`
+		HumanPlayers          uint8       `json:"human_players"`
+		LeagueId              uint32      `json:"leagueid"`
+		PositiveVotes         uint32      `json:"positive_votes"`
+		NegativeVotes         uint32      `json:"negative_votes"`
 		GameMode              uint8       `json:"game_mode"`
 		PicksBans             []PicksBans `json:"picks_bans"`
 		RadiantCaptain        uint64      `json:"radiant_captain"`
@@ -139,8 +158,15 @@ type MatchDetailsResult struct {
 	}
 }
 
-func GetMatchHistory(apiKey string, result *MatchHistoryResult) error {
-	request := streamApi + "GetMatchHistory/v1/?key=" + apiKey
+func GetMatchHistory(apiKey string, startMatchId uint64, count uint16, result *MatchHistoryResult) error {
+	request := fmt.Sprintf("%sGetMatchHistory/v1/?key=%s", streamApi, apiKey)
+	if startMatchId != 0 {
+		request = fmt.Sprintf("%s?start_at_match_id=%d", request, startMatchId)
+	}
+	if count != 0 {
+		request = fmt.Sprintf("%s?matches_requested=%d", request, count)
+	}
+
 	log.Println("Request: " + request)
 	resp, err := http.Get(request)
 	if err != nil {
@@ -150,10 +176,11 @@ func GetMatchHistory(apiKey string, result *MatchHistoryResult) error {
 
 	bodyBytes, _ := ioutil.ReadAll(resp.Body)
 
+	log.Println("GetMatchHistory, JSON ", string(bodyBytes))
+
 	err = json.Unmarshal(bodyBytes, &result)
 	if err != nil && result.Result.Status != 1 {
 		log.Fatalln("result", result)
-		log.Fatalln("JSON", string(bodyBytes))
 		return err
 	}
 	return nil
@@ -171,12 +198,13 @@ func GetMatchDetails(apiKey string, matchId uint64, result *MatchDetailsResult) 
 	bodyBytes, _ := ioutil.ReadAll(resp.Body)
 	reader := bytes.NewReader(bodyBytes)
 
+	log.Println("GetMatchDetails, JSON", string(bodyBytes))
+
 	d := json.NewDecoder(reader)
 	d.UseNumber()
 	err = d.Decode(result)
 	if err != nil {
 		log.Fatalln("result", result)
-		log.Fatalln("JSON", string(bodyBytes))
 		return err
 	}
 	return nil
@@ -197,65 +225,12 @@ func Connect(config DbConfig) error {
 		panic(err)
 	}
 
-	dbData_.stmtAddMatch, err = dbData_.db.Prepare("INSERT INTO matches (season, radiant_win, duration, start_time, match_id, match_seq_num, cluster, first_blood_time, lobby_type, human_players, leagueid, positive_votes, negative_votes, game_mode, tower_status_radiant, tower_status_dire, barracks_status_radiant, barracks_status_dire) " +
-		"VALUES( ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? )")
-	if err != nil {
-		panic(err.Error())
-	}
-
-	dbData_.stmtAddPlayer, err = dbData_.db.Prepare("INSERT INTO match_players (match_id, account_id, hero_id, item_0, item_1, item_2, item_3, item_4, item_5, kills, deaths, assists, leaver_status, gold, last_hits, denies, gold_per_min, xp_per_min, gold_spent, hero_damage, tower_damage, hero_healing, level, skill_build, player_slot) " +
-		"VALUES( ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-	if err != nil {
-		panic(err.Error())
-	}
-
-	dbData_.stmtAddTeam, err = dbData_.db.Prepare("INSERT INTO match_teams (match_id, radiant_team_id, radiant_name, radiant_logo, radiant_team_complete, dire_team_id, dire_name, dire_logo, dire_team_complete, radiant_captain, dire_captain) " +
-		"VALUES( ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-	if err != nil {
-		panic(err.Error())
-	}
-
-	dbData_.stmtAddSkillBuilds, err = dbData_.db.Prepare("INSERT INTO player_skill_builds (build_id, `order`, ability) VALUES( ?, ?, ?)")
-	if err != nil {
-		panic(err.Error())
-	}
-
-	dbData_.stmtAddPickBans, err = dbData_.db.Prepare("INSERT INTO match_picks_bans (match_id, `order`, is_pick, hero_id, team) " +
-		" VALUES( ?, ?, ?, ?, ? )")
-	if err != nil {
-		panic(err.Error())
-	}
-
-	dbData_.stmtAddUnits, err = dbData_.db.Prepare("INSERT INTO match_additional_units (match_id, account_id, unitname, item_0, item_1, item_2, item_3, item_4, item_5, player_slot) " +
-		"VALUES( ?, ?, ?, ?, ?, ?, ?, ?, ?, ? )")
-	if err != nil {
-		panic(err.Error())
-	}
-
 	return nil
 }
-
 func Close() {
 	if dbData_.db != nil {
 		dbData_.db.Close()
-		dbData_.stmtAddSkillBuilds.Close()
-		dbData_.stmtAddMatch.Close()
-		dbData_.stmtAddTeam.Close()
-		dbData_.stmtAddPlayer.Close()
-		dbData_.stmtAddPickBans.Close()
-		dbData_.stmtAddUnits.Close()
 	}
-}
-
-type DbContext struct {
-	transaction *sql.Tx
-
-	stmtAddSkillBuilds *sql.Stmt
-	stmtAddMatch       *sql.Stmt
-	stmtAddTeam        *sql.Stmt
-	stmtAddPlayer      *sql.Stmt
-	stmtAddPickBans    *sql.Stmt
-	stmtAddUnits       *sql.Stmt
 }
 
 func Begin() (ctx DbContext, err error) {
@@ -265,12 +240,41 @@ func Begin() (ctx DbContext, err error) {
 		log.Fatalln("Can't create transactions, error = " + err.Error())
 		return
 	}
-	ctx.stmtAddSkillBuilds = ctx.transaction.Stmt(dbData_.stmtAddSkillBuilds)
-	ctx.stmtAddMatch = ctx.transaction.Stmt(dbData_.stmtAddMatch)
-	ctx.stmtAddTeam = ctx.transaction.Stmt(dbData_.stmtAddTeam)
-	ctx.stmtAddPlayer = ctx.transaction.Stmt(dbData_.stmtAddPlayer)
-	ctx.stmtAddPickBans = ctx.transaction.Stmt(dbData_.stmtAddPickBans)
-	ctx.stmtAddUnits = ctx.transaction.Stmt(dbData_.stmtAddUnits)
+	ctx.stmtAddSkillBuilds, err = ctx.transaction.Prepare(queryAddSkillBuilds)
+	if err != nil {
+		log.Fatalln("Can't create transactions, error = " + err.Error())
+		return
+	}
+	ctx.stmtAddMatch, err = ctx.transaction.Prepare(queryAddMatch)
+	if err != nil {
+		log.Fatalln("Can't create transactions, error = " + err.Error())
+		return
+	}
+	ctx.stmtAddTeam, err = ctx.transaction.Prepare(queryAddTeam)
+	if err != nil {
+		log.Fatalln("Can't create transactions, error = " + err.Error())
+		return
+	}
+	ctx.stmtAddCaptain, err = ctx.transaction.Prepare(queryAddCaptain)
+	if err != nil {
+		log.Fatalln("Can't create transactions, error = " + err.Error())
+		return
+	}
+	ctx.stmtAddPlayer, err = ctx.transaction.Prepare(queryAddPlayer)
+	if err != nil {
+		log.Fatalln("Can't create transactions, error = " + err.Error())
+		return
+	}
+	ctx.stmtAddPickBans, err = ctx.transaction.Prepare(queryAddPickBans)
+	if err != nil {
+		log.Fatalln("Can't create transactions, error = " + err.Error())
+		return
+	}
+	ctx.stmtAddUnits, err = ctx.transaction.Prepare(queryAddUnits)
+	if err != nil {
+		log.Fatalln("Can't create transactions, error = " + err.Error())
+		return
+	}
 	return
 }
 
@@ -278,16 +282,28 @@ func (ctx DbContext) Close() error {
 	return ctx.transaction.Commit()
 }
 
-func (ctx DbContext) addSkillBuild(player PlayerEx, skillBuildId *uint64) {
+func (ctx DbContext) addSkillBuild(player PlayerEx, skillBuildId *int64) {
+	var buildId int64
 
+	for order, ability := range player.Ability_upgrades {
+		res, err := ctx.stmtAddSkillBuilds.Exec(buildId, order, ability.Level, ability.Ability)
+		if err != nil {
+			panic("Failed to add ability: " + err.Error())
+		}
+		buildId, err = res.LastInsertId()
+		if err != nil {
+			panic("Failed to add ability: " + err.Error())
+		}
+	}
+	*skillBuildId = buildId
 }
 
 func (ctx DbContext) addPlayer(matchId uint64, player PlayerEx) {
-	log.Println(fmt.Sprintf("Add player, matchId = %d, player = %d", matchId, player.Player_slot))
-	var skillBuildId uint64
+	log.Println(fmt.Sprintf("Add player, matchId = %d, player_id = %d, player_slot = %d", matchId, player.AccountId, player.Player_slot))
+	var skillBuildId int64
 
 	ctx.addSkillBuild(player, &skillBuildId)
-	_, err := dbData_.stmtAddPlayer.Exec(
+	_, err := ctx.stmtAddPlayer.Exec(
 		matchId,
 		player.AccountId,
 		player.Hero_id,
@@ -320,10 +336,21 @@ func (ctx DbContext) addPlayer(matchId uint64, player PlayerEx) {
 }
 
 func (ctx DbContext) addTeam(match MatchDetailsResult) {
-	if match.Result.RadiantTeamId == 0 || match.Result.DireTeamId == 0 {
-		return
+	if match.Result.RadiantCaptain != 0 {
+		ctx.stmtAddCaptain.Exec(match.Result.MatchID, match.Result.RadiantCaptain, true)
 	}
 
+	if match.Result.DireCaptain != 0 {
+		ctx.stmtAddCaptain.Exec(match.Result.MatchID, match.Result.DireCaptain, false)
+	}
+
+	if match.Result.RadiantTeamId != 0 {
+		ctx.stmtAddTeam.Exec(match.Result.MatchID, match.Result.RadiantTeamId, match.Result.RadiantName, match.Result.RadiantLogo, match.Result.RadiantTeamComplete, true)
+	}
+
+	if match.Result.DireTeamId != 0 {
+		ctx.stmtAddTeam.Exec(match.Result.MatchID, match.Result.DireTeamId, match.Result.DireName, match.Result.DireLogo, match.Result.DireTeamComplete, false)
+	}
 }
 
 func (ctx DbContext) addPicks(match PlayerEx) {
@@ -332,7 +359,7 @@ func (ctx DbContext) addPicks(match PlayerEx) {
 
 func (ctx DbContext) addMatchData(match MatchDetailsResult) {
 
-	log.Println(fmt.Sprintf("Add matchData, matchId = %d, %p", match.Result.MatchID, dbData_.stmtAddMatch))
+	log.Println(fmt.Sprintf("Add matchData, matchId = %d", match.Result.MatchID))
 
 	_, err := ctx.stmtAddMatch.Exec(
 		match.Result.Season,

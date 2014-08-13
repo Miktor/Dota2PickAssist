@@ -13,7 +13,9 @@ func Start(apiKey string) {
 	var matches dal.MatchHistoryResult
 	var err error
 
-	err = dal.GetMatchHistory(apiKey, &matches)
+	err = dal.GetMatchHistory(apiKey, 0, 0, &matches)
+
+	log.Fatalln("GetMatchHistory returned %d matches", matches.Result.NumResults)
 
 	if err != nil {
 		log.Fatalln("Failed to get MatchHistory, error: %v", err)
