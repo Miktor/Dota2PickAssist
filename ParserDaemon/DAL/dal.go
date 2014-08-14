@@ -26,10 +26,9 @@ const queryAddPlayer string = "INSERT INTO match_players (match_id, account_id, 
 	"VALUES( ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 const queryAddTeam string = "INSERT INTO match_teams (match_id, team_id, name, logo, team_complete, radiant) " +
 	"VALUES( ?, ?, ?, ?, ?, ?)"
-const queryAddSkillBuilds string = "INSERT INTO player_skill_builds (build_id, `order`, level, ability) VALUES( ?, ?, ?, ?)"
+const queryAddSkillBuilds string = "INSERT INTO player_skill_builds (build_id, level, ability, time) VALUES( ?, ?, ?, FROM_UNIXTIME( ? ) )"
 const queryAddCaptain string = "INSERT INTO match_captains (match_id, captain, radiant) VALUES( ?, ?, ?)"
-const queryAddPickBans string = "INSERT INTO match_picks_bans (match_id, `order`, is_pick, hero_id, team) " +
-	" VALUES( ?, ?, ?, ?, ? )"
+const queryAddPickBans string = "INSERT INTO match_picks_bans (match_id, `order`, is_pick, hero_id, team) VALUES( ?, ?, ?, ?, ? )"
 const queryAddUnits string = "INSERT INTO match_additional_units (match_id, account_id, unitname, item_0, item_1, item_2, item_3, item_4, item_5, player_slot) " +
 	"VALUES( ?, ?, ?, ?, ?, ?, ?, ?, ?, ? )"
 
@@ -54,17 +53,17 @@ var dbData_ dbData
 const streamApi = "https://api.steampowered.com/IDOTA2Match_570/"
 
 type Player struct {
-	AccountId  uint64 `json:"account_id"`
+	AccountId  uint32 `json:"account_id"`
 	PlayerSlot uint8  `json:"player_slot"`
 	HeroId     uint8  `json:"hero_id"`
 }
 type Match struct {
 	MatchId       uint64   `json:"match_id"`
 	MatchSeqNum   uint64   `json:"match_seq_num"`
-	StartTime     uint64   `json:"start_time"`
-	LobbyType     uint64   `json:"lobby_type"`
-	RadiantTeamId uint64   `json:"radiant_team_id"`
-	DireTeamId    uint64   `json:"dire_team_id"`
+	StartTime     uint32   `json:"start_time"`
+	LobbyType     uint8    `json:"lobby_type"`
+	RadiantTeamId uint32   `json:"radiant_team_id"`
+	DireTeamId    uint32   `json:"dire_team_id"`
 	Players       []Player `json:"players"`
 }
 type MatchHistoryResult struct {
@@ -167,7 +166,7 @@ func GetMatchHistory(apiKey string, startMatchId uint64, count uint16, result *M
 		request = fmt.Sprintf("%s?matches_requested=%d", request, count)
 	}
 
-	log.Println("Request: " + request)
+	log.Printf("Request: " + request)
 	resp, err := http.Get(request)
 	if err != nil {
 		return err
@@ -180,7 +179,7 @@ func GetMatchHistory(apiKey string, startMatchId uint64, count uint16, result *M
 
 	err = json.Unmarshal(bodyBytes, &result)
 	if err != nil && result.Result.Status != 1 {
-		log.Fatalln("result", result)
+		log.Println("result", result)
 		return err
 	}
 	return nil
@@ -204,7 +203,7 @@ func GetMatchDetails(apiKey string, matchId uint64, result *MatchDetailsResult) 
 	d.UseNumber()
 	err = d.Decode(result)
 	if err != nil {
-		log.Fatalln("result", result)
+		log.Println("result", result)
 		return err
 	}
 	return nil
@@ -237,42 +236,42 @@ func Begin() (ctx DbContext, err error) {
 	ctx = DbContext{}
 	ctx.transaction, err = dbData_.db.Begin()
 	if err != nil {
-		log.Fatalln("Can't create transactions, error = " + err.Error())
+		log.Println("Can't create transactions, error = " + err.Error())
 		return
 	}
 	ctx.stmtAddSkillBuilds, err = ctx.transaction.Prepare(queryAddSkillBuilds)
 	if err != nil {
-		log.Fatalln("Can't create transactions, error = " + err.Error())
+		log.Println("Can't create transactions, error = " + err.Error())
 		return
 	}
 	ctx.stmtAddMatch, err = ctx.transaction.Prepare(queryAddMatch)
 	if err != nil {
-		log.Fatalln("Can't create transactions, error = " + err.Error())
+		log.Println("Can't create transactions, error = " + err.Error())
 		return
 	}
 	ctx.stmtAddTeam, err = ctx.transaction.Prepare(queryAddTeam)
 	if err != nil {
-		log.Fatalln("Can't create transactions, error = " + err.Error())
+		log.Println("Can't create transactions, error = " + err.Error())
 		return
 	}
 	ctx.stmtAddCaptain, err = ctx.transaction.Prepare(queryAddCaptain)
 	if err != nil {
-		log.Fatalln("Can't create transactions, error = " + err.Error())
+		log.Println("Can't create transactions, error = " + err.Error())
 		return
 	}
 	ctx.stmtAddPlayer, err = ctx.transaction.Prepare(queryAddPlayer)
 	if err != nil {
-		log.Fatalln("Can't create transactions, error = " + err.Error())
+		log.Println("Can't create transactions, error = " + err.Error())
 		return
 	}
 	ctx.stmtAddPickBans, err = ctx.transaction.Prepare(queryAddPickBans)
 	if err != nil {
-		log.Fatalln("Can't create transactions, error = " + err.Error())
+		log.Println("Can't create transactions, error = " + err.Error())
 		return
 	}
 	ctx.stmtAddUnits, err = ctx.transaction.Prepare(queryAddUnits)
 	if err != nil {
-		log.Fatalln("Can't create transactions, error = " + err.Error())
+		log.Println("Can't create transactions, error = " + err.Error())
 		return
 	}
 	return
@@ -285,8 +284,8 @@ func (ctx DbContext) Close() error {
 func (ctx DbContext) addSkillBuild(player PlayerEx, skillBuildId *int64) {
 	var buildId int64
 
-	for order, ability := range player.Ability_upgrades {
-		res, err := ctx.stmtAddSkillBuilds.Exec(buildId, order, ability.Level, ability.Ability)
+	for _, ability := range player.Ability_upgrades {
+		res, err := ctx.stmtAddSkillBuilds.Exec(buildId, ability.Level, ability.Ability, ability.Time)
 		if err != nil {
 			panic("Failed to add ability: " + err.Error())
 		}
@@ -359,7 +358,7 @@ func (ctx DbContext) addPicks(match PlayerEx) {
 
 func (ctx DbContext) addMatchData(match MatchDetailsResult) {
 
-	log.Println(fmt.Sprintf("Add matchData, matchId = %d", match.Result.MatchID))
+	log.Printf(fmt.Sprintf("Add matchData, matchId = %d\n", match.Result.MatchID))
 
 	_, err := ctx.stmtAddMatch.Exec(
 		match.Result.Season,
@@ -387,7 +386,7 @@ func (ctx DbContext) addMatchData(match MatchDetailsResult) {
 }
 
 func (ctx DbContext) AddMatch(match *MatchDetailsResult) {
-	log.Println(fmt.Sprintf("Add match, matchId = %d", match.Result.MatchID))
+	log.Printf("Add match, matchId = %d\n", match.Result.MatchID)
 
 	ctx.addMatchData(*match)
 	for _, player := range match.Result.Players {

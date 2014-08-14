@@ -36,7 +36,7 @@ func main() {
 	config := LoadConfig("config.json")
 	dal.Connect(config.Db)
 
-	f, err := os.OpenFile(config.LogFile, os.O_RDWR|os.O_TRUNC, 0666)
+	f, err := os.OpenFile(config.LogFile, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
 	if err != nil {
 		fmt.Printf("File error: %v\n", err)
 		os.Exit(1)
