@@ -4,7 +4,7 @@ package parser
 import (
 	"../dal"
 	"fmt"
-	"log"
+	log "github.com/cihub/seelog"
 	"time"
 )
 
@@ -29,47 +29,71 @@ func Start(apiKey string) {
 	var matches dal.MatchHistoryResult
 	var err error
 
-	err = dal.GetMatchHistory(apiKey, 0, 0, &matches)
-
-	log.Printf("GetMatchHistory returned %d matches\n", matches.Result.NumResults)
-
-	if err != nil {
-		log.Printf("Failed to get MatchHistory, error: %v\n", err)
-	}
-
 	start := time.Now()
 
-	var ctx dal.DbContext
-	ctx, err = dal.Begin()
+	var ctx dal.DALContext
 
-	if err != nil {
-		log.Printf("Failed to begin transaction, error: %v\n", err)
-		panic(err)
-	}
+	var startMatchId uint64
+	var count uint16
 
-	for _, match := range matches.Result.Matches {
+	for i := 0; i < 10; i++ {
+		ctx, err = dal.Begin()
 
-		err = preValidateMatch(&match)
 		if err != nil {
-			log.Printf("Invalid match (%d), pre validation error = %s\n", match.MatchId, err)
+			log.Criticalf("Failed to begin transaction, error: %v\n", err)
 			continue
 		}
 
-		err = dal.GetMatchDetails(apiKey, match.MatchId, &matchDetails)
-		if err != nil {
-			log.Printf("Failed to get MatchDetails, error: %v\n", err)
-		}
+		defer ctx.Close()
 
-		err = validateMatch(&matchDetails)
-		if err != nil {
-			log.Printf("Invalid match (%d), validation error = %s\n", match.MatchId, err)
-			continue
+		for {
+			err = dal.GetMatchHistory(apiKey, startMatchId, count, &matches)
+
+			if err != nil {
+				log.Errorf("Failed to get MatchHistory, error: %v\n", err)
+			}
+
+			log.Tracef("GetMatchHistory header:\n"+
+				"\tStatus           = %d\n"+
+				"\tNumResults       = %d\n"+
+				"\tTotalResults     = %d\n"+
+				"\tResultsRemaining = %d\n",
+				matches.Result.Status, matches.Result.NumResults, matches.Result.TotalResults, matches.Result.ResultsRemaining)
+
+			if matches.Result.NumResults == 0 {
+				log.Info("GetMatchHistory returned 0 matches\n")
+				break
+			}
+
+			if matches.Result.NumResults != uint32(len(matches.Result.Matches)) {
+				log.Warnf("GetMatchHistory NumResults mismatch (%d != %d)\n", matches.Result.NumResults, len(matches.Result.Matches))
+			}
+
+			startMatchId = matches.Result.Matches[matches.Result.NumResults-1].MatchId - 1
+
+			for _, match := range matches.Result.Matches {
+
+				err = preValidateMatch(&match)
+				if err != nil {
+					log.Infof("Invalid match (%d), pre validation error = %s\n", match.MatchId, err)
+					continue
+				}
+
+				err = ctx.GetMatchDetails(apiKey, match.MatchId, &matchDetails)
+				if err != nil {
+					log.Errorf("Failed to get MatchDetails, error: %v\n", err)
+				}
+
+				err = validateMatch(&matchDetails)
+				if err != nil {
+					log.Infof("Invalid match (%d), validation error = %s\n", match.MatchId, err)
+					continue
+				}
+				ctx.AddMatch(&matchDetails)
+			}
 		}
-		ctx.AddMatch(&matchDetails)
 	}
-
-	ctx.Close()
 
 	elapsed := time.Since(start)
-	log.Printf("add took %s", elapsed)
+	log.Tracef("add took %s", elapsed)
 }

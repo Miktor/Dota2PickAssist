@@ -6,8 +6,8 @@ import (
 	"./parser"
 	"encoding/json"
 	"fmt"
+	log "github.com/cihub/seelog"
 	"io/ioutil"
-	"log"
 	"os"
 )
 
@@ -33,18 +33,22 @@ func LoadConfig(filePath string) (cfg Config) {
 }
 
 func main() {
-	config := LoadConfig("config.json")
-	dal.Connect(config.Db)
-
-	f, err := os.OpenFile(config.LogFile, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
+	defer log.Flush()
+	logger, err := log.LoggerFromConfigAsFile("logconfig")
 	if err != nil {
-		fmt.Printf("File error: %v\n", err)
+		fmt.Printf("log error: %v\n", err)
 		os.Exit(1)
 	}
-	defer f.Close()
+	log.ReplaceLogger(logger)
 
-	log.SetOutput(f)
-	log.Println("Starting")
+	config := LoadConfig("config.json")
+
+	log.Trace("Initializationg...\n")
+
+	dal.Connect(config.Db)
+	defer dal.Close()
+
+	log.Trace("Starting...\n")
 	parser.Start(config.SteamApiKey)
-	log.Println("Exiting")
+	log.Trace("Exit!\n")
 }

@@ -2,13 +2,12 @@
 package dal
 
 import (
-	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	log "github.com/cihub/seelog"
 	_ "github.com/go-sql-driver/mysql"
 	"io/ioutil"
-	"log"
 	"net/http"
 )
 
@@ -36,7 +35,7 @@ type dbData struct {
 	db *sql.DB
 }
 
-type DbContext struct {
+type DALContext struct {
 	transaction *sql.Tx
 
 	stmtAddSkillBuilds *sql.Stmt
@@ -68,10 +67,10 @@ type Match struct {
 }
 type MatchHistoryResult struct {
 	Result struct {
-		Status           float64 `json:"status"`
-		NumResults       float64 `json:"num_results"`
-		TotalResults     float64 `json:"total_results"`
-		ResultsRemaining float64 `json:"results_remaining"`
+		Status           uint32  `json:"status"`
+		NumResults       uint32  `json:"num_results"`
+		TotalResults     uint32  `json:"total_results"`
+		ResultsRemaining uint32  `json:"results_remaining"`
 		Matches          []Match `json:"matches"`
 	}
 }
@@ -160,50 +159,45 @@ type MatchDetailsResult struct {
 func GetMatchHistory(apiKey string, startMatchId uint64, count uint16, result *MatchHistoryResult) error {
 	request := fmt.Sprintf("%sGetMatchHistory/v1/?key=%s", streamApi, apiKey)
 	if startMatchId != 0 {
-		request = fmt.Sprintf("%s?start_at_match_id=%d", request, startMatchId)
+		request = fmt.Sprintf("%s&start_at_match_id=%d", request, startMatchId)
 	}
 	if count != 0 {
-		request = fmt.Sprintf("%s?matches_requested=%d", request, count)
+		request = fmt.Sprintf("%s&matches_requested=%d", request, count)
 	}
 
-	log.Printf("Request: " + request)
+	log.Tracef("Request: " + request)
 	resp, err := http.Get(request)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
 
 	bodyBytes, _ := ioutil.ReadAll(resp.Body)
+	resp.Body.Close()
 
-	log.Println("GetMatchHistory, JSON ", string(bodyBytes))
+	log.Tracef("GetMatchHistory, JSON ", string(bodyBytes))
 
-	err = json.Unmarshal(bodyBytes, &result)
+	err = json.Unmarshal(bodyBytes, result)
 	if err != nil && result.Result.Status != 1 {
-		log.Println("result", result)
 		return err
 	}
 	return nil
 }
-func GetMatchDetails(apiKey string, matchId uint64, result *MatchDetailsResult) error {
+func (ctx DALContext) GetMatchDetails(apiKey string, matchId uint64, result *MatchDetailsResult) error {
 	request := streamApi + "GetMatchDetails/v1/?key=" + apiKey + "&match_id=" + fmt.Sprintf("%d", matchId)
-	log.Println("Request: " + request)
+	log.Trace("Request: " + request)
 
 	resp, err := http.Get(request)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
 
 	bodyBytes, _ := ioutil.ReadAll(resp.Body)
-	reader := bytes.NewReader(bodyBytes)
+	resp.Body.Close()
 
-	log.Println("GetMatchDetails, JSON", string(bodyBytes))
+	log.Trace("GetMatchDetails, JSON", string(bodyBytes))
 
-	d := json.NewDecoder(reader)
-	d.UseNumber()
-	err = d.Decode(result)
+	err = json.Unmarshal(bodyBytes, result)
 	if err != nil {
-		log.Println("result", result)
 		return err
 	}
 	return nil
@@ -213,7 +207,7 @@ func Connect(config DbConfig) error {
 	var err error
 
 	connectString := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s", config.Login, config.Password, config.Host, config.Port, config.DbName)
-	log.Println("Connection string = " + connectString)
+	log.Trace("Connection string = " + connectString)
 	dbData_.db, err = sql.Open("mysql", connectString)
 	if err != nil {
 		panic(err)
@@ -232,56 +226,49 @@ func Close() {
 	}
 }
 
-func Begin() (ctx DbContext, err error) {
-	ctx = DbContext{}
+func Begin() (ctx DALContext, err error) {
+
 	ctx.transaction, err = dbData_.db.Begin()
 	if err != nil {
-		log.Println("Can't create transactions, error = " + err.Error())
 		return
 	}
 	ctx.stmtAddSkillBuilds, err = ctx.transaction.Prepare(queryAddSkillBuilds)
 	if err != nil {
-		log.Println("Can't create transactions, error = " + err.Error())
 		return
 	}
 	ctx.stmtAddMatch, err = ctx.transaction.Prepare(queryAddMatch)
 	if err != nil {
-		log.Println("Can't create transactions, error = " + err.Error())
 		return
 	}
 	ctx.stmtAddTeam, err = ctx.transaction.Prepare(queryAddTeam)
 	if err != nil {
-		log.Println("Can't create transactions, error = " + err.Error())
 		return
 	}
 	ctx.stmtAddCaptain, err = ctx.transaction.Prepare(queryAddCaptain)
 	if err != nil {
-		log.Println("Can't create transactions, error = " + err.Error())
 		return
 	}
 	ctx.stmtAddPlayer, err = ctx.transaction.Prepare(queryAddPlayer)
 	if err != nil {
-		log.Println("Can't create transactions, error = " + err.Error())
 		return
 	}
 	ctx.stmtAddPickBans, err = ctx.transaction.Prepare(queryAddPickBans)
 	if err != nil {
-		log.Println("Can't create transactions, error = " + err.Error())
 		return
 	}
 	ctx.stmtAddUnits, err = ctx.transaction.Prepare(queryAddUnits)
 	if err != nil {
-		log.Println("Can't create transactions, error = " + err.Error())
 		return
 	}
 	return
 }
 
-func (ctx DbContext) Close() error {
-	return ctx.transaction.Commit()
+func (ctx DALContext) Close() (err error) {
+	err = ctx.transaction.Commit()
+	return
 }
 
-func (ctx DbContext) addSkillBuild(player PlayerEx, skillBuildId *int64) {
+func (ctx DALContext) addSkillBuild(player PlayerEx, skillBuildId *int64) {
 	var buildId int64
 
 	for _, ability := range player.Ability_upgrades {
@@ -297,8 +284,8 @@ func (ctx DbContext) addSkillBuild(player PlayerEx, skillBuildId *int64) {
 	*skillBuildId = buildId
 }
 
-func (ctx DbContext) addPlayer(matchId uint64, player PlayerEx) {
-	log.Println(fmt.Sprintf("Add player, matchId = %d, player_id = %d, player_slot = %d", matchId, player.AccountId, player.Player_slot))
+func (ctx DALContext) addPlayer(matchId uint64, player PlayerEx) {
+	log.Tracef("Add player, matchId = %d, player_id = %d, player_slot = %d", matchId, player.AccountId, player.Player_slot)
 	var skillBuildId int64
 
 	ctx.addSkillBuild(player, &skillBuildId)
@@ -334,7 +321,7 @@ func (ctx DbContext) addPlayer(matchId uint64, player PlayerEx) {
 	}
 }
 
-func (ctx DbContext) addTeam(match MatchDetailsResult) {
+func (ctx DALContext) addTeam(match MatchDetailsResult) {
 	if match.Result.RadiantCaptain != 0 {
 		ctx.stmtAddCaptain.Exec(match.Result.MatchID, match.Result.RadiantCaptain, true)
 	}
@@ -352,13 +339,13 @@ func (ctx DbContext) addTeam(match MatchDetailsResult) {
 	}
 }
 
-func (ctx DbContext) addPicks(match PlayerEx) {
+func (ctx DALContext) addPicks(match PlayerEx) {
 
 }
 
-func (ctx DbContext) addMatchData(match MatchDetailsResult) {
+func (ctx DALContext) addMatchData(match MatchDetailsResult) {
 
-	log.Printf(fmt.Sprintf("Add matchData, matchId = %d\n", match.Result.MatchID))
+	log.Tracef("Add matchData, matchId = %d\n", match.Result.MatchID)
 
 	_, err := ctx.stmtAddMatch.Exec(
 		match.Result.Season,
@@ -385,8 +372,8 @@ func (ctx DbContext) addMatchData(match MatchDetailsResult) {
 	}
 }
 
-func (ctx DbContext) AddMatch(match *MatchDetailsResult) {
-	log.Printf("Add match, matchId = %d\n", match.Result.MatchID)
+func (ctx DALContext) AddMatch(match *MatchDetailsResult) {
+	log.Tracef("Add match, matchId = %d\n", match.Result.MatchID)
 
 	ctx.addMatchData(*match)
 	for _, player := range match.Result.Players {

@@ -1,0 +1,21 @@
+<seelog>
+    <outputs>	
+    	<filter formatid="console" levels="error,critical">
+        	<console/>        
+    	</filter>
+    	<filter formatid="file" levels="trace,debug,info,warn,error,critical">
+    		<filter	levels="info,warn,error,critical">
+		        <rollingfile type="date" filename="logs/roll.log" 
+		        	datepattern="02.01.2006" maxrolls="7" 
+		        	archivetype="zip"
+		        	archivepath="logs/old_logs.zip"/>
+        	</filter>
+	    	<rollingfile type="size" filename="logs/spam.log" 
+	        	maxsize="1000000" maxrolls="0"/>        	   
+    	</filter>
+    </outputs>
+    <formats>
+        <format id="console" format="[%Time] [%LEV] [%FuncShort]:%t%Msg%n"/>
+        <format id="file" format="[%Time] [%LEVEL] [%File:%FuncShort]:%t%Msg%n"/>
+    </formats>
+</seelog>
