@@ -2,6 +2,7 @@
 package dal
 
 import (
+	"container/list"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -30,6 +31,8 @@ const queryAddCaptain string = "INSERT INTO match_captains (match_id, captain, r
 const queryAddPickBans string = "INSERT INTO match_picks_bans (match_id, `order`, is_pick, hero_id, team) VALUES( ?, ?, ?, ?, ? )"
 const queryAddUnits string = "INSERT INTO match_additional_units (match_id, account_id, unitname, item_0, item_1, item_2, item_3, item_4, item_5, player_slot) " +
 	"VALUES( ?, ?, ?, ?, ?, ?, ?, ?, ?, ? )"
+const queryNeedUpdateAccounts string = "SELECT account_id FROM registred_users"
+const queryNeedMatch string = "SELECT match_id FROM matches WHERE match_id = ?"
 
 type dbData struct {
 	db *sql.DB
@@ -45,6 +48,9 @@ type DALContext struct {
 	stmtAddPlayer      *sql.Stmt
 	stmtAddPickBans    *sql.Stmt
 	stmtAddUnits       *sql.Stmt
+
+	stmtGetNeedUpdateAccounts *sql.Stmt
+	stmtNeedMatch             *sql.Stmt
 }
 
 var dbData_ dbData
@@ -156,8 +162,50 @@ type MatchDetailsResult struct {
 	}
 }
 
-func GetMatchHistory(apiKey string, startMatchId uint64, count uint16, result *MatchHistoryResult) error {
+func (ctx DALContext) GetNeedUpdateAccounts() (error, *list.List) {
+	rows, err := ctx.stmtGetNeedUpdateAccounts.Query()
+	if err != nil {
+		return err, nil
+	}
+	defer rows.Close()
+
+	ids := list.New()
+
+	var id uint32
+	for rows.Next() {
+		if err := rows.Scan(&id); err != nil {
+			log.Error(err)
+			continue
+		}
+		log.Tracef("Account %d is need update\n", id)
+		ids.PushBack(id)
+	}
+
+	return err, ids
+}
+func (ctx DALContext) NeedMatch(id uint64) error {
+	rows, err := ctx.stmtNeedMatch.Query(id)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	var resId uint64
+	for rows.Next() {
+		if err := rows.Scan(&resId); err != nil {
+			log.Error(err)
+			continue
+		}
+		return log.Errorf("Match %d is already exists\n", id)
+	}
+
+	return nil
+}
+func GetMatchHistory(apiKey string, account_id uint32, startMatchId uint64, count uint16, result *MatchHistoryResult) error {
 	request := fmt.Sprintf("%sGetMatchHistory/v1/?key=%s", streamApi, apiKey)
+	if account_id != 0 {
+		request = fmt.Sprintf("%s&account_id=%d", request, account_id)
+	}
 	if startMatchId != 0 {
 		request = fmt.Sprintf("%s&start_at_match_id=%d", request, startMatchId)
 	}
@@ -165,7 +213,7 @@ func GetMatchHistory(apiKey string, startMatchId uint64, count uint16, result *M
 		request = fmt.Sprintf("%s&matches_requested=%d", request, count)
 	}
 
-	log.Tracef("Request: " + request)
+	//log.Tracef("Request: " + request)
 	resp, err := http.Get(request)
 	if err != nil {
 		return err
@@ -174,7 +222,7 @@ func GetMatchHistory(apiKey string, startMatchId uint64, count uint16, result *M
 	bodyBytes, _ := ioutil.ReadAll(resp.Body)
 	resp.Body.Close()
 
-	log.Tracef("GetMatchHistory, JSON ", string(bodyBytes))
+	//log.Tracef("GetMatchHistory, JSON ", string(bodyBytes))
 
 	err = json.Unmarshal(bodyBytes, result)
 	if err != nil && result.Result.Status != 1 {
@@ -184,7 +232,7 @@ func GetMatchHistory(apiKey string, startMatchId uint64, count uint16, result *M
 }
 func (ctx DALContext) GetMatchDetails(apiKey string, matchId uint64, result *MatchDetailsResult) error {
 	request := streamApi + "GetMatchDetails/v1/?key=" + apiKey + "&match_id=" + fmt.Sprintf("%d", matchId)
-	log.Trace("Request: " + request)
+	//log.Trace("Request: " + request)
 
 	resp, err := http.Get(request)
 	if err != nil {
@@ -194,7 +242,7 @@ func (ctx DALContext) GetMatchDetails(apiKey string, matchId uint64, result *Mat
 	bodyBytes, _ := ioutil.ReadAll(resp.Body)
 	resp.Body.Close()
 
-	log.Trace("GetMatchDetails, JSON", string(bodyBytes))
+	//log.Trace("GetMatchDetails, JSON", string(bodyBytes))
 
 	err = json.Unmarshal(bodyBytes, result)
 	if err != nil {
@@ -228,6 +276,7 @@ func Close() {
 
 func Begin() (ctx DALContext, err error) {
 
+	log.Trace("Open transaction!")
 	ctx.transaction, err = dbData_.db.Begin()
 	if err != nil {
 		return
@@ -260,10 +309,20 @@ func Begin() (ctx DALContext, err error) {
 	if err != nil {
 		return
 	}
+	ctx.stmtGetNeedUpdateAccounts, err = ctx.transaction.Prepare(queryNeedUpdateAccounts)
+	if err != nil {
+		return
+	}
+	ctx.stmtNeedMatch, err = ctx.transaction.Prepare(queryNeedMatch)
+	if err != nil {
+		return
+	}
+
 	return
 }
 
 func (ctx DALContext) Close() (err error) {
+	log.Trace("Close transaction!")
 	err = ctx.transaction.Commit()
 	return
 }
