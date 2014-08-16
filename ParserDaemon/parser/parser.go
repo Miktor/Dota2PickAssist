@@ -3,7 +3,6 @@ package parser
 
 import (
 	"../dal"
-	"container/list"
 	"fmt"
 	log "github.com/cihub/seelog"
 	"time"
@@ -49,12 +48,11 @@ func addMatches(ctx *dal.DALContext, apiKey string, matches *dal.MatchHistoryRes
 			log.Infof("Invalid match (%d), validation error = %s\n", match.MatchId, err)
 			continue
 		}
-		ctx.AddMatch(&matchDetails)
+		ctx.AddMatch(&matchDetails.Match)
 	}
 }
 
-func updateAccountMatches(apiKey string, accountId uint32) error {
-	var startMatchId uint64
+func updateAccountMatches(apiKey string, accountId uint32, startMatchId uint64, count uint16) error {
 	var matches dal.MatchHistoryResult
 
 	log.Trace("Update Account(%d) Matches", accountId)
@@ -101,31 +99,57 @@ func updateAccountMatches(apiKey string, accountId uint32) error {
 	return nil
 }
 
+func updateMatchesFromSeq(apiKey string, seqNum uint64) (err error, lastSeqNum uint64) {
+	var result dal.MatchHistorySeqNumResult
+	log.Trace("Add matches by seq num")
+	err = dal.GetMatchHistoryBySeqNum(apiKey, seqNum, 0, &result)
+
+	if err != nil {
+		return
+	}
+	ctx, err := dal.Begin()
+
+	if err != nil {
+		log.Criticalf("Failed to begin transaction, error: %v\n", err)
+		return
+	}
+	defer ctx.Close()
+
+	for _, match := range result.Result.Matches {
+		ctx.AddMatch(&match)
+		lastSeqNum = match.MatchSeq
+	}
+	return
+}
+
 func Start(apiKey string) {
 	start := time.Now()
-	var ids *list.List
+
+	var seqNum uint64
+	{
+		log.Trace("Enter main loop")
+		ctx, err := dal.Begin()
+
+		if err != nil {
+			log.Criticalf("Failed to begin transaction, error: %s\n", err)
+		}
+		defer ctx.Close()
+
+		err, seqNum = ctx.GetLastMatchSeqNum()
+		if err != nil {
+			log.Criticalf("Failed to get Last Match Seq Num. err = %s\n", err)
+		}
+	}
 
 	for i := 0; i < 1; i++ {
-		{
-			log.Trace("Enter main loop")
-			ctx, err := dal.Begin()
+		seqNum++
+		err, seqNum := updateMatchesFromSeq(apiKey, seqNum)
 
-			if err != nil {
-				log.Criticalf("Failed to begin transaction, error: %v\n", err)
-				continue
-			}
-			defer ctx.Close()
-
-			err, ids = ctx.GetNeedUpdateAccounts()
-			if err != nil || ids == nil {
-				log.Infof("Failed to get accounts to update. err = %s\n", err)
-				continue
-			}
+		if err != nil {
+			log.Critical(err)
 		}
 
-		for id := ids.Front(); id != nil; id = id.Next() {
-			updateAccountMatches(apiKey, id.Value.(uint32))
-		}
+		seqNum++
 	}
 
 	elapsed := time.Since(start)
