@@ -2,13 +2,17 @@
 package main
 
 import (
+	"./console"
 	"./dal"
 	"./parser"
+	"bufio"
+	"code.google.com/p/go.net/context"
 	"encoding/json"
 	"fmt"
 	log "github.com/cihub/seelog"
 	"io/ioutil"
 	"os"
+	"sync"
 )
 
 type Config struct {
@@ -32,6 +36,14 @@ func LoadConfig(filePath string) (cfg Config) {
 	return cfg
 }
 
+var cancel context.CancelFunc
+var wg sync.WaitGroup
+
+func Exit(args []string) {
+	log.Trace("Exit!\n")
+	cancel()
+	wg.Done()
+}
 func main() {
 	defer log.Flush()
 	logger, err := log.LoggerFromConfigAsFile("logconfig")
@@ -45,10 +57,22 @@ func main() {
 
 	log.Trace("Initializationg...\n")
 
-	dal.Connect(config.Db)
-	defer dal.Close()
+	var mainCtx context.Context
+	mainCtx, cancel = context.WithCancel(context.Background())
+
+	cm := console.Init(mainCtx, bufio.NewReader(os.Stdin), bufio.NewWriter(os.Stdout))
+	cm.AddHandler("exit", Exit)
+	wg.Add(1)
+	go cm.Start()
 
 	log.Trace("Starting...\n")
-	parser.Start(config.SteamApiKey)
-	log.Trace("Exit!\n")
+
+	{
+		dal.Connect(config.Db)
+		defer dal.Close()
+
+		parser.Start(mainCtx, config.SteamApiKey)
+	}
+
+	wg.Wait()
 }

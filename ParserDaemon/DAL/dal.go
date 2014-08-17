@@ -190,7 +190,7 @@ func (ctx DALContext) Close() (err error) {
 	return
 }
 
-func (ctx DALContext) addUnits(matchId uint64, player *PlayerEx) {
+func (ctx DALContext) addUnits(matchId uint64, player PlayerEx) {
 	for _, unit := range player.AdditionalUnits {
 		_, err := ctx.stmtAddUnits.Exec(matchId, player.AccountId, unit.Unitname, unit.Item_0, unit.Item_1, unit.Item_2, unit.Item_3, unit.Item_4, unit.Item_5)
 		if err != nil {
@@ -198,7 +198,7 @@ func (ctx DALContext) addUnits(matchId uint64, player *PlayerEx) {
 		}
 	}
 }
-func (ctx DALContext) addSkillBuild(player *PlayerEx, skillBuildId *int64) {
+func (ctx DALContext) addSkillBuild(player PlayerEx, skillBuildId *int64) {
 	var buildId int64
 
 	for _, ability := range player.AbilityUpgrades {
@@ -213,8 +213,7 @@ func (ctx DALContext) addSkillBuild(player *PlayerEx, skillBuildId *int64) {
 	}
 	*skillBuildId = buildId
 }
-func (ctx DALContext) addPlayer(matchId uint64, player *PlayerEx) {
-	log.Tracef("Add player, matchId = %d, player_id = %d, player_slot = %d", matchId, player.AccountId, player.Player_slot)
+func (ctx DALContext) addPlayer(matchId uint64, player PlayerEx) {
 	var skillBuildId int64
 
 	ctx.addSkillBuild(player, &skillBuildId)
@@ -251,7 +250,7 @@ func (ctx DALContext) addPlayer(matchId uint64, player *PlayerEx) {
 
 	ctx.addUnits(matchId, player)
 }
-func (ctx DALContext) addTeam(match *MatchResult) {
+func (ctx DALContext) addTeam(match MatchResult) {
 	if match.RadiantCaptain != 0 {
 		ctx.stmtAddCaptain.Exec(match.MatchID, match.RadiantCaptain, true)
 	}
@@ -268,7 +267,7 @@ func (ctx DALContext) addTeam(match *MatchResult) {
 		ctx.stmtAddTeam.Exec(match.MatchID, match.DireTeamId, match.DireName, match.DireLogo, match.DireTeamComplete, false)
 	}
 }
-func (ctx DALContext) addPicks(match *MatchResult) {
+func (ctx DALContext) addPicks(match MatchResult) {
 	var err error
 
 	for _, pickBan := range match.PicksBans {
@@ -278,10 +277,7 @@ func (ctx DALContext) addPicks(match *MatchResult) {
 		}
 	}
 }
-func (ctx DALContext) addMatchData(match *MatchResult) {
-
-	log.Tracef("Add matchData, matchId = %d\n", match.MatchID)
-
+func (ctx DALContext) addMatchData(match MatchResult) {
 	_, err := ctx.stmtAddMatch.Exec(
 		match.Season,
 		match.RadiantWin,
@@ -312,8 +308,8 @@ func (ctx DALContext) addMatchData(match *MatchResult) {
 func (ctx DALContext) AddMatch(match *MatchResult) {
 	log.Tracef("Add match, matchId = %d\n", match.MatchID)
 
-	ctx.addMatchData(match)
+	ctx.addMatchData(*match)
 	for _, player := range match.Players {
-		ctx.addPlayer(match.MatchID, &player)
+		ctx.addPlayer(match.MatchID, player)
 	}
 }

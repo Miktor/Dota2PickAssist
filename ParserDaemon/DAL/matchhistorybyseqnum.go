@@ -25,7 +25,7 @@ func GetMatchHistoryBySeqNum(apiKey string, startSeqNum uint64, count uint16, re
 		request = fmt.Sprintf("%s&matches_requested=%d", request, count)
 	}
 
-	//log.Tracef("Request: " + request)
+	log.Tracef("Request: " + request)
 	resp, err := http.Get(request)
 	if err != nil {
 		return err

@@ -4,9 +4,9 @@ package dal
 import (
 	"encoding/json"
 	"fmt"
+	log "github.com/cihub/seelog"
 	"io/ioutil"
 	"net/http"
-	//log "github.com/cihub/seelog"
 )
 
 type Player struct {
@@ -47,7 +47,7 @@ func GetMatchHistory(apiKey string, account_id uint32, startMatchId uint64, coun
 		request = fmt.Sprintf("%s&matches_requested=%d", request, count)
 	}
 
-	//log.Tracef("Request: " + request)
+	log.Tracef("Request: " + request)
 	resp, err := http.Get(request)
 	if err != nil {
 		return err

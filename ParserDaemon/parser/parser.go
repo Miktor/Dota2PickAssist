@@ -3,14 +3,16 @@ package parser
 
 import (
 	"../dal"
+	"code.google.com/p/go.net/context"
 	"fmt"
 	log "github.com/cihub/seelog"
+	"sync"
 	"time"
 )
 
 const maxUint = ^uint32(0)
 
-func preValidateMatch(match *dal.Match) error {
+func preValidateMatch(match dal.Match) error {
 	for _, player := range match.Players {
 		if player.AccountId == maxUint {
 			return fmt.Errorf("One of players have invalid ID (id == -1).")
@@ -19,11 +21,11 @@ func preValidateMatch(match *dal.Match) error {
 	return nil
 }
 
-func validateMatch(match *dal.MatchDetailsResult) error {
+func validateMatch(match dal.MatchDetailsResult) error {
 	return nil
 }
 
-func addMatches(ctx *dal.DALContext, apiKey string, matches *dal.MatchHistoryResult) {
+func addMatchesWithValidation(ctx dal.DALContext, apiKey string, matches dal.MatchHistoryResult) {
 	var matchDetails dal.MatchDetailsResult
 	for _, match := range matches.Result.Matches {
 		err := ctx.NeedMatch(match.MatchId)
@@ -32,7 +34,7 @@ func addMatches(ctx *dal.DALContext, apiKey string, matches *dal.MatchHistoryRes
 			continue
 		}
 
-		err = preValidateMatch(&match)
+		err = preValidateMatch(match)
 		if err != nil {
 			log.Infof("Invalid match (%d), pre validation error = %s\n", match.MatchId, err)
 			continue
@@ -43,7 +45,7 @@ func addMatches(ctx *dal.DALContext, apiKey string, matches *dal.MatchHistoryRes
 			log.Errorf("Failed to get MatchDetails, error: %v\n", err)
 		}
 
-		err = validateMatch(&matchDetails)
+		err = validateMatch(matchDetails)
 		if err != nil {
 			log.Infof("Invalid match (%d), validation error = %s\n", match.MatchId, err)
 			continue
@@ -94,20 +96,14 @@ func updateAccountMatches(apiKey string, accountId uint32, startMatchId uint64, 
 		}
 
 		startMatchId = matches.Result.Matches[matches.Result.NumResults-1].MatchId - 1
-		addMatches(&ctx, apiKey, &matches)
+		addMatchesWithValidation(ctx, apiKey, matches)
 	}
 	return nil
 }
 
-func updateMatchesFromSeq(apiKey string, seqNum uint64) (err error, lastSeqNum uint64) {
-	var result dal.MatchHistorySeqNumResult
-	log.Trace("Add matches by seq num")
-	err = dal.GetMatchHistoryBySeqNum(apiKey, seqNum, 0, &result)
-
-	if err != nil {
-		return
-	}
-	ctx, err := dal.Begin()
+func addMatches(matches []dal.MatchResult) (err error) {
+	var ctx dal.DALContext
+	ctx, err = dal.Begin()
 
 	if err != nil {
 		log.Criticalf("Failed to begin transaction, error: %v\n", err)
@@ -115,14 +111,21 @@ func updateMatchesFromSeq(apiKey string, seqNum uint64) (err error, lastSeqNum u
 	}
 	defer ctx.Close()
 
-	for _, match := range result.Result.Matches {
-		ctx.AddMatch(&match)
-		lastSeqNum = match.MatchSeq
+	var wg sync.WaitGroup
+	wg.Add(len(matches))
+	for _, match := range matches {
+		go func(match dal.MatchResult) {
+			ctx.AddMatch(&match)
+			wg.Done()
+		}(match)
 	}
+
+	wg.Wait()
+
 	return
 }
 
-func Start(apiKey string) {
+func Start(execCtx context.Context, apiKey string) {
 	start := time.Now()
 
 	var seqNum uint64
@@ -141,17 +144,43 @@ func Start(apiKey string) {
 		}
 	}
 
-	for i := 0; i < 1; i++ {
-		seqNum++
-		err, seqNum := updateMatchesFromSeq(apiKey, seqNum)
+	var m sync.Mutex
+	matchHistorySeqNumResults := make(chan dal.MatchHistorySeqNumResult, 1)
 
-		if err != nil {
-			log.Critical(err)
+	go getMatchesBySeq(apiKey, &seqNum, matchHistorySeqNumResults, m)
+
+	for {
+		select {
+		case <-execCtx.Done():
+			close(matchHistorySeqNumResults)
+			break
+		case res := <-matchHistorySeqNumResults:
+			go getMatchesBySeq(apiKey, &seqNum, matchHistorySeqNumResults, m)
+
+			err := addMatches(res.Result.Matches)
+
+			if err != nil {
+				log.Critical(err)
+			}
 		}
-
-		seqNum++
 	}
 
 	elapsed := time.Since(start)
 	log.Tracef("add took %s", elapsed)
+}
+
+func getMatchesBySeq(apiKey string, seqNum *uint64, hist chan dal.MatchHistorySeqNumResult, m sync.Mutex) error {
+	m.Lock()
+	defer m.Unlock()
+
+	var result dal.MatchHistorySeqNumResult
+	err := dal.GetMatchHistoryBySeqNum(apiKey, (*seqNum)+1, 0, &result)
+
+	if err != nil {
+		return err
+	}
+
+	*seqNum = result.Result.Matches[len(result.Result.Matches)-1].MatchSeq
+	hist <- result
+	return err
 }

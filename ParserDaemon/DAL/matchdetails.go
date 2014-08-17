@@ -4,9 +4,9 @@ package dal
 import (
 	"encoding/json"
 	"fmt"
+	log "github.com/cihub/seelog"
 	"io/ioutil"
 	"net/http"
-	//log "github.com/cihub/seelog"
 )
 
 type AbilityUpgrades struct {
@@ -99,7 +99,7 @@ type MatchDetailsResult struct {
 
 func (ctx DALContext) GetMatchDetails(apiKey string, matchId uint64, result *MatchDetailsResult) error {
 	request := streamApi + "GetMatchDetails/v1/?key=" + apiKey + "&match_id=" + fmt.Sprintf("%d", matchId)
-	//log.Trace("Request: " + request)
+	log.Trace("Request: " + request)
 
 	resp, err := http.Get(request)
 	if err != nil {
